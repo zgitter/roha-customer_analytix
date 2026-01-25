@@ -1,0 +1,42 @@
+# Environment
+.venv/
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (keep structure, ignore contents)
+data/raw/*
+data/cleaned/*
+data/samples/*
+data/reports/*
+!data/**/.gitkeep
+
+# Models
+models/*.joblib
+models/*.pkl
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

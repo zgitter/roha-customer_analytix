@@ -1,0 +1,33 @@
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+
+# Feature Engineering & Analysis
+scipy>=1.11.0
+
+# API Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+
+# Dashboard
+streamlit>=1.28.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+
+# Notebooks
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+
+# Configuration
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+tqdm>=4.65.0
