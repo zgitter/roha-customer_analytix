@@ -115,3 +115,21 @@ def get_drift():
     
     drift_df = calculate_drift(current_counts, prev_counts)
     return drift_df.to_dict(orient='records')
+
+@app.get("/rfm-details")
+def get_rfm_details():
+    _, rfm = get_data_state()
+    if rfm is None:
+        return []
+    return rfm.reset_index().to_dict(orient='records')
+
+@app.get("/revenue-trends")
+def get_revenue_trends():
+    df, _ = get_data_state()
+    if df is None:
+        return []
+    df['date'] = pd.to_datetime(df['date'])
+    daily_rev = df.groupby(df['date'].dt.date)['amount'].sum().reset_index()
+    daily_rev.columns = ['date', 'revenue']
+    daily_rev['date'] = daily_rev['date'].apply(lambda x: x.isoformat())
+    return daily_rev.to_dict(orient='records')
