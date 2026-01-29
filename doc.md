@@ -1,305 +1,140 @@
-# RFM Analytics — Project Documentation
+# Behavior Intelligence Decision System — System Architecture
 
-> A customer segmentation platform built on the RFM (Recency, Frequency, Monetary) framework
+> **Current Architecture Status**: A rules-based decision support system for customer retention and growth.
+> **Philosophy**: Decision-First, No Black-Box ML.
 
 ---
 
-## Project Architecture
+## High-Level Architecture
 
-### Layer Overview
+The system follows a strict **unidirectional data flow** pipeline, transforming raw transactions into actionable decisions.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      PRESENTATION LAYER                         │
-│         Streamlit Dashboard  │  FastAPI REST API                │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────────┐
-│                      FEATURE ENGINEERING                         │
-│                    RFM Calculation & Scoring                     │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────────┐
-│                         DATA LAYER                               │
-│              Raw Data  │  Cleaned Data  │  Samples               │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    DATA[Transaction Data] --> ENGINE[Intelligence Engine]
+    ENGINE --> API[FastAPI Logic Layer]
+    API --> UI[Decision-First UI]
+    UI --> FEEDBACK[Feedback Actions]
+    FEEDBACK --> ENGINE
 ```
 
 ---
 
-### Layer 1: Data Layer
+## 2. Core Layers & Components
 
-Storage layer for all transactional data.
+### Layer 1: Data & Input
+**Location**: `data/`
+- **Transactions (`data/raw/`):** The source of truth. Schema: `customer_id`, `date`, `amount`.
+- **Feedback (`data/feedback.csv`):** The system's memory. Records every human decision (Apply/Ignore) made on recommendations.
 
-| Directory | Purpose |
-|-----------|---------|
-| `data/raw/` | Original client data (CSV, exports) |
-| `data/cleaned/` | Validated, deduplicated datasets |
-| `data/samples/` | Synthetic test data for development |
+### Layer 2: Feature & Segmentation Engine
+**Location**: `features/`, `segmentation/`
+- **RFM Engine (`features/rfm.py`):** 
+    - Computes **R**ecency, **F**requency, **M**onetary values.
+    - Assigns **1-5 scores** (Quintiles) for each dimension.
+    - Calculates composite **RFM Score** (`0.3R + 0.3F + 0.4M`).
+- **Segmentation Logic (`segmentation/rfm_segments.py`):**
+    - Deterministic, rules-based mapping:
+    - `Champions`: R=4-5, F=4-5
+    - `At Risk`: R=1-2, F=3-5
+    - (And 3 other segments)
 
-**The Simplest Required Data Schema:**
-```
-customer_id, transaction_date, amount
-C001, 2025-03-15, 150.00
-C001, 2025-06-22, 89.50
-C002, 2025-01-10, 220.00
+### Layer 3: Action Engine
+**Location**: `actions/`
+- **Rule Engine (`actions/action_engine.py`):**
+    - The "Brain" of the system.
+    - **Input**: Segment + RFM Scores.
+    - **Logic**: IF `Segment == At Risk` AND `Money >= 4` THEN `Offer Retention`.
+    - **Output**: Action Cards with Priority (High, Medium, Low).
+
+### Layer 4: Intelligence & Drift
+**Location**: `drift/`
+- **Drift Detector (`drift/segment_drift.py`):**
+    - Monitors stability.
+    - Compares execution-time segment distribution vs previous snapshots.
+    - Alerts on significant shifts (e.g., "At Risk segment grew by 5%").
+
+### Layer 5: Delivery & Interaction
+**Location**: `api.py`, `app.py`
+- **API (`api.py`):** Single-file FastAPI exposing logic as JSON services.
+    - `GET /actions`: The "feed" of recommendations.
+    - `POST /feedback`: The write-back for decisions.
+- **UI (`app.py`):** Streamlit interface optimized for speed.
+    - **Zero-Config Dashboard**: Prioritizes "What do I do now?" over "What happened?".
+
+---
+
+## 3. End-to-End Data Flow
+
+### The "Decision Loop"
+
+1. **Ingest**: `api.py` loads `demo_transactions.csv`.
+2. **Compute**: 
+   - `rfm.py` transforms 2000 rows → 500 Customer Profiles.
+   - `rfm_segments.py` labels them (e.g., "C001 is At Risk").
+3. **Reason**:
+   - `action_engine.py` scans profiles against Business Rules.
+   - Finds C001 matches "High Value Churn Risk" rule.
+   - Generates Action Object: `{id: "act_retention_001", priority: "High"}`.
+4. **Serve**: UI fetches Action Object via `GET /actions`.
+5. **Act**: User clicks "✅ Apply". UI posts to `/feedback`.
+6. **Learn**: System saves decision to `feedback.csv` (for future audit/optimization).
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as Streamlit App
+    participant API as FastAPI
+    participant Logic as Action Engine
+    participant DB as Feedback CSV
+
+    User->>UI: Opens Dashboard
+    UI->>API: GET /actions
+    API->>Logic: Run Rules
+    Logic-->>API: List[Action]
+    API-->>UI: JSON Data
+    UI-->>User: Show "High Priority" Cards
+
+    User->>UI: Clicks "Apply"
+    UI->>API: POST /feedback
+    API->>DB: Append Row
+    API-->>UI: 200 OK
+    UI-->>User: Toast "Action Applied"
 ```
 
 ---
 
-### Layer 2: Feature Engineering Layer
+## 4. Key Features Implemented
 
-Transforms raw transactions into RFM metrics.
-
-| File | Purpose |
-|------|---------|
-| `features/rfm.py` | RFM calculation, scoring, segmentation |
-| `features/utils.py` | Config loading, data utilities |
-
-**Functions:**
-- `calculate_rfm()` — Aggregate transactions to R, F, M values
-- `score_rfm()` — Assign 1-5 scores using quintiles
-- `segment_customers()` — Map scores to business segments
+| Feature category | Capability | Implementation details |
+|------------------|------------|------------------------|
+| **Scoring** | 1-5 Scale | Quintile-based dynamic scoring on R, F, M. |
+| **Segmentation** | 5 Core Segments | Champions, Loyal, Potential Loyalists, At Risk, Hibernating. |
+| **Decisioning** | Priority Queuing | Actions are sorted by Business Priority (High > Med > Low). |
+| **Drift** | Stability Check | Real-time calculation of segment distribution shifts. |
+| **Feedback** | Human-in-the-loop | All rejected/accepted actions are logged with timestamps. |
+| **Explainability** | "Glass Box" | Every action includes a natural language "Reason" field. |
 
 ---
 
-### Layer 3: Presentation Layer
+## 5. Directory Structure Map
 
-User-facing interfaces for analytics.
-
-| File | Purpose | Access |
-|------|---------|--------|
-| `app/dashboard.py` | Interactive Streamlit dashboard | `localhost:8501` |
-| `app/api.py` | REST API for programmatic access | `localhost:8000` |
-
----
-
-## RFM Pipeline
-
-### What is RFM?
-
-RFM is a customer segmentation technique based on three behavioral metrics:
-
-| Metric | Definition | Scoring |
-|--------|------------|---------|
-| **Recency** | Days since last purchase | Lower = Better (5) |
-| **Frequency** | Total number of purchases | Higher = Better (5) |
-| **Monetary** | Total amount spent | Higher = Better (5) |
-
-### Pipeline Flow
-
-```
-┌──────────────────┐
-│ Transaction Data │
-│ (CSV)            │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ calculate_rfm()  │
-│ • Group by       │
-│   customer_id    │
-│ • Compute R,F,M  │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ score_rfm()      │
-│ • Quintile bins  │
-│ • R_score (1-5)  │
-│ • F_score (1-5)  │
-│ • M_score (1-5)  │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ segment_         │
-│ customers()      │
-│ • Rule-based     │
-│   assignment     │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ Customer         │
-│ Segments         │
-└──────────────────┘
-```
-
-### Segment Definitions
-
-| Segment | R Score | F Score | Action |
-|---------|---------|---------|--------|
-| **Champions** | 4-5 | 4-5 | Reward & retain |
-| **Loyal** | 3-5 | 3-5 | Upsell opportunities |
-| **Potential Loyalists** | 4-5 | 1-3 | Nurture relationship |
-| **At Risk** | 1-2 | 3-5 | Urgent re-engagement |
-| **Hibernating** | 1-2 | 1-2 | Win-back campaigns |
-
----
-
-## Next Steps
-
-### Immediate Priorities
-
-1. **Real Data Integration**
-   - Connect to actual transaction source
-   - Implement data validation
-   - Add preprocessing pipeline
-
-2. **Data Quality**
-   - Handle missing values
-   - Detect/remove outliers
-   - Standardize date formats
-
-3. **Enhanced Segmentation**
-   - Add K-Means clustering option
-   - Time-based segment evolution tracking
-
----
-
-### Minimum Required Fields
-
-```python
-# Essential columns
-required_columns = [
-    'customer_id',       # Unique customer identifier
-    'transaction_date',  # Date of purchase (YYYY-MM-DD)
-    'amount'             # Transaction value (numeric)
-]
-
-# Helpful additions
-optional_columns = [
-    'transaction_id',    # Unique transaction ID
-    'product_category',  # For category-level RFM
-    'channel',           # Online, Store, Mobile
-]
-```
-
----
-
-## Data Pipeline Requirements
-
-To prepare real data for RFM analysis, implement these preprocessing steps:
-
-### 1. Data Ingestion
-
-```python
-# scripts/ingest_data.py should handle:
-- Load from CSV, API, or database
-- Validate required columns exist
-- Parse dates consistently
-- Save to data/raw/
-```
-
-### 2. Data Cleaning
-
-```python
-# Cleaning operations needed:
-- Remove duplicate transactions
-- Handle null customer_ids (drop)
-- Handle null amounts (drop or impute)
-- Convert dates to datetime
-- Filter date range (e.g., last 12 months)
-```
-
-### 3. Data Validation
-
-```python
-# Validation checks:
-- amount > 0 (exclude refunds or filter separately)
-- transaction_date <= today (no future dates)
-- customer_id not empty
-- Remove test transactions
-```
-
-### 4. Data Transformation
-
-```python
-# Prepare for RFM:
-- Aggregate to customer level
-- Set reference date (analysis date)
-- Calculate days since last purchase
-- Sum frequencies and monetary values
-```
-
-### Suggested Pipeline Structure
-
-```
-data/raw/transactions.csv
-        │
-        ▼
-┌───────────────────┐
-│ 1. INGEST         │
-│ • Load file       │
-│ • Validate schema │
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐
-│ 2. CLEAN          │
-│ • Remove nulls    │
-│ • Remove dupes    │
-│ • Parse dates     │
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐
-│ 3. VALIDATE       │
-│ • Check ranges    │
-│ • Flag anomalies  │
-└─────────┬─────────┘
-          │
-          ▼
-data/cleaned/transactions_clean.csv
-          │
-          ▼
-┌───────────────────┐
-│ 4. RFM PIPELINE   │
-│ • calculate_rfm() │
-│ • score_rfm()     │
-│ • segment()       │
-└─────────┬─────────┘
-          │
-          ▼
-      Dashboard
-```
-
----
-
-## Running the Project
-
-```bash
-# 1. Activate environment
-source .venv/bin/activate
-
-# 2. Generate sample data (for testing)
-python scripts/ingest_data.py --generate-sample
-
-# 3. Launch dashboard
-streamlit run app/dashboard.py
-
-# 4. Or launch API
-uvicorn app.api:app --reload
-```
-
----
-
-## Configuration
-
-All settings in `config.yaml`:
-
-(The values in the config file are based on the classic RFM marketing framework)
-
-```yaml
-data:
-  raw_dir: "./data/raw"
-  cleaned_dir: "./data/cleaned"
-  samples_dir: "./data/samples"
-
-rfm:
-  n_bins: 5  # Quintile scoring
-  recency_weight: 0.3
-  frequency_weight: 0.3
-  monetary_weight: 0.4
+```text
+customer-analytics/
+├── api.py                  # API Gateway
+├── app.py                  # UI Frontend
+├── features/
+│   └── rfm.py              # Math Logic
+├── segmentation/
+│   └── rfm_segments.py     # Business Logic (Classification)
+├── actions/
+│   └── action_engine.py    # Business Logic (Recommendation)
+├── drift/
+│   └── segment_drift.py    # Monitoring Logic
+├── data/
+│   └── feedback.csv        # Persistence
+└── scripts/
+    └── generate_demo_data.py
 ```

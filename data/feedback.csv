@@ -1,0 +1,5 @@
+action_id,segment,applied,outcome,timestamp
+act_retention_001,At Risk,yes,positive,2025-01-20T10:00:00
+act_growth_001,Potential Loyalists,no,unknown,2025-01-21T14:30:00
+act_retention_001,At Risk,yes,unknown,2026-01-29T12:43:47.225923
+act_retention_001,At Risk,no,unknown,2026-01-29T12:47:08.951056

@@ -1,36 +1,20 @@
 """
-Feature Engineering Utilities
+Shared Utilities
 """
 import pandas as pd
-import numpy as np
-from typing import Optional
+import yaml
+import os
 
-
-def load_config(config_path: str = "config.yaml") -> dict:
-    """Load YAML configuration file."""
-    import yaml
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
+def load_config(config_path="config.yaml"):
+    """Load configuration from YAML file."""
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Basic DataFrame cleaning operations."""
-    # Remove duplicates
+    """Basic cleaning: drop duplicates and nulls."""
+    df = df.copy()
     df = df.drop_duplicates()
-    
-    # Handle missing values
-    df = df.dropna(subset=['customer_id'])
-    
+    df = df.dropna()
     return df
-
-
-def calculate_date_diff(
-    df: pd.DataFrame,
-    date_col: str,
-    reference_date: Optional[pd.Timestamp] = None
-) -> pd.Series:
-    """Calculate days difference from reference date."""
-    if reference_date is None:
-        reference_date = pd.Timestamp.now()
-    
-    return (reference_date - pd.to_datetime(df[date_col])).dt.days

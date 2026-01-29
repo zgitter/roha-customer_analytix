@@ -1,4 +1,4 @@
-# RFM Analytics (MVP)
+(MVP)
 
 A Python-based customer segmentation platform using RFM (Recency, Frequency, Monetary) analysis.
 
@@ -66,7 +66,4 @@ Access: http://localhost:8501
 uvicorn app.api:app --reload
 ```
 Access: http://localhost:8000/docs
-
-## 📝 License
-
-MIT
+---

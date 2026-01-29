@@ -1,116 +1,54 @@
 """
-RFM (Recency, Frequency, Monetary) Feature Engineering
+RFM Computation Engine
 """
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional
-from .utils import load_config
 
-
-def calculate_rfm(
-    df: pd.DataFrame,
-    customer_id_col: str = 'customer_id',
-    date_col: str = 'transaction_date',
-    amount_col: str = 'amount',
-    reference_date: Optional[pd.Timestamp] = None
-) -> pd.DataFrame:
+def calculate_rfm_scores(df: pd.DataFrame, 
+                         customer_col='customer_id', 
+                         date_col='date', 
+                         amount_col='amount') -> pd.DataFrame:
     """
-    Calculate RFM metrics for each customer.
-    
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Transaction data with customer_id, date, and amount
-    customer_id_col : str
-        Column name for customer ID
-    date_col : str
-        Column name for transaction date
-    amount_col : str
-        Column name for transaction amount
-    reference_date : pd.Timestamp, optional
-        Reference date for recency calculation (defaults to max date in data)
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with customer_id, recency, frequency, monetary columns
+    Computes R, F, M scores (1-5) and weighted composite score.
+    Input df must have: customer_id, date, amount
     """
-    if reference_date is None:
-        reference_date = pd.to_datetime(df[date_col]).max()
-    
+    # Defensive copy & conversion
     df = df.copy()
     df[date_col] = pd.to_datetime(df[date_col])
     
-    rfm = df.groupby(customer_id_col).agg({
-        date_col: lambda x: (reference_date - x.max()).days,  # Recency
-        customer_id_col: 'count',  # Frequency
-        amount_col: 'sum'  # Monetary
+    # Snapshot date (max date + 1 day to ensure recency > 0)
+    snapshot_date = df[date_col].max() + pd.Timedelta(days=1)
+    
+    # Aggregation
+    rfm = df.groupby(customer_col).agg({
+        date_col: lambda x: (snapshot_date - x.max()).days,
+        customer_col: 'count',
+        amount_col: 'sum'
     }).rename(columns={
         date_col: 'recency',
-        customer_id_col: 'frequency',
+        customer_col: 'frequency',
         amount_col: 'monetary'
     })
     
-    return rfm.reset_index()
-
-
-def score_rfm(
-    rfm_df: pd.DataFrame,
-    n_bins: int = 5
-) -> pd.DataFrame:
-    """
-    Assign RFM scores (1-5) to each customer.
+    # Scoring (Quintiles 1-5)
+    # Recency: Lower is better (reverse labels)
+    rfm['R'] = pd.qcut(rfm['recency'], q=5, labels=[5, 4, 3, 2, 1])
     
-    Parameters
-    ----------
-    rfm_df : pd.DataFrame
-        DataFrame with recency, frequency, monetary columns
-    n_bins : int
-        Number of bins for scoring (default 5)
+    # Frequency: Higher is better
+    # Use rank(method='first') to handle ties in low-data volume cases
+    rfm['F'] = pd.qcut(rfm['frequency'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5])
     
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with R_score, F_score, M_score, RFM_score columns added
-    """
-    df = rfm_df.copy()
+    # Monetary: Higher is better
+    rfm['M'] = pd.qcut(rfm['monetary'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5])
     
-    # Recency: lower is better
-    df['R_score'] = pd.qcut(df['recency'], q=n_bins, labels=range(n_bins, 0, -1), duplicates='drop')
+    # Convert to integers
+    rfm['R'] = rfm['R'].astype(int)
+    rfm['F'] = rfm['F'].astype(int)
+    rfm['M'] = rfm['M'].astype(int)
     
-    # Frequency: higher is better
-    df['F_score'] = pd.qcut(df['frequency'].rank(method='first'), q=n_bins, labels=range(1, n_bins + 1), duplicates='drop')
+    # Composite Score
+    # score = 0.3R + 0.3F + 0.4M
+    rfm['rfm_score'] = (0.3 * rfm['R']) + (0.3 * rfm['F']) + (0.4 * rfm['M'])
+    rfm['rfm_score'] = rfm['rfm_score'].round(2)
     
-    # Monetary: higher is better
-    df['M_score'] = pd.qcut(df['monetary'].rank(method='first'), q=n_bins, labels=range(1, n_bins + 1), duplicates='drop')
-    
-    # Combined RFM score
-    df['RFM_score'] = df['R_score'].astype(str) + df['F_score'].astype(str) + df['M_score'].astype(str)
-    
-    return df
-
-
-def segment_customers(rfm_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Assign customer segments based on RFM scores.
-    """
-    df = rfm_df.copy()
-    
-    def assign_segment(row):
-        r, f, m = int(row['R_score']), int(row['F_score']), int(row['M_score'])
-        
-        if r >= 4 and f >= 4:
-            return 'Champions'
-        elif r >= 3 and f >= 3:
-            return 'Loyal'
-        elif r >= 4 and f <= 2:
-            return 'New Customers'
-        elif r <= 2 and f >= 3:
-            return 'At Risk'
-        elif r <= 2 and f <= 2:
-            return 'Hibernating'
-        else:
-            return 'Potential Loyalists'
-    
-    df['segment'] = df.apply(assign_segment, axis=1)
-    return df
+    return rfm
