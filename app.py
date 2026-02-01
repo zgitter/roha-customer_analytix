@@ -12,12 +12,21 @@ import pandas as pd
 import requests
 import altair as alt
 import plotly.express as px
+import config
 
-API_URL = "http://localhost:8000"
+API_URL = config.dashboard.api_url
 
-st.set_page_config(page_title="Action Center & Analytics", layout="wide")
+st.set_page_config(page_title=config.app.name, layout="wide")
+
+# Set dynamic Plotly template
+PLOTLY_TEMPLATE = "plotly_dark" if config.dashboard.theme.lower() == "dark" else "plotly_white"
+
+# Initialize session state for inspector
+if "selected_customer" not in st.session_state:
+    st.session_state.selected_customer = None
 
 # --- Helper to fetch data ---
+@st.cache_data(ttl=60)
 def fetch_api(endpoint):
     try:
         r = requests.get(f"{API_URL}/{endpoint}")
@@ -28,140 +37,258 @@ def fetch_api(endpoint):
 # --- Main Layout ---
 st.title("Behavior Intelligence Platform")
 
-tab1, tab2 = st.tabs(["🎯 Action Center", "📈 Analytics Deep Dive"])
+tab1, tab2, tab3 = st.tabs(["🎯 Action Center", "📊 KPI Dashboard", "📈 Analytics Deep Dive"])
 
 # =================================================================
 # TAB 1: ACTION CENTER
 # =================================================================
 with tab1:
-    st.header("⚠️ High Priority Actions")
+    st.subheader("🏁 Priority Activity Board")
     
-    actions = fetch_api("actions")
+    actions_raw = fetch_api("actions")
     
-    if actions:
+    if actions_raw:
+        actions_df = pd.DataFrame(actions_raw)
+        
+        # 3 Column Layout
         cols = st.columns(3)
-        for i, action in enumerate(actions[:3]):
-            with cols[i]:
-                with st.container(border=True):
-                    st.subheader(f"{action['priority']} Priority")
-                    st.markdown(f"**Segment:** {action['segment']}")
-                    st.info(f"📢 {action['message']}")
-                    st.caption(f"Reason: {action['reason']}")
+        priorities = ["High", "Medium", "Low"]
+        
+        for idx, priority in enumerate(priorities):
+            with cols[idx]:
+                st.info(f"**{priority} Priority**")
+                
+                # Filter for this priority column
+                priority_subset = actions_df[actions_df['priority'] == priority]
+                
+                if priority_subset.empty:
+                    st.caption("No pending actions.")
+                else:
+                    # Group by Campaign
+                    campaigns = priority_subset.groupby(['action_id', 'message', 'segment', 'reason']).size().reset_index(name='count')
                     
-                    c1, c2 = st.columns(2)
-                    if c1.button("✅ Apply", key=f"yes_{i}"):
-                        requests.post(f"{API_URL}/feedback", json={
-                            "action_id": action['action_id'],
-                            "segment": action['segment'],
-                            "applied": "yes"
-                        })
-                        st.toast("Action Applied!")
-                        
-                    if c2.button("❌ Ignore", key=f"no_{i}"):
-                        requests.post(f"{API_URL}/feedback", json={
-                            "action_id": action['action_id'],
-                            "segment": action['segment'],
-                            "applied": "no"
-                        })
-                        st.toast("Action Ignored")
+                    for _, camp in campaigns.iterrows():
+                        # Create a Card-like container
+                        with st.container(border=True):
+                            st.markdown(f"**{camp['message']}**")
+                            st.caption(f"🎯 {camp['segment']} • {camp['count']} users")
+                            
+                            # Filter customers for this specific campaign card
+                            camp_customers = priority_subset[
+                                (priority_subset['action_id'] == camp['action_id']) & 
+                                (priority_subset['segment'] == camp['segment'])
+                            ]
+                            
+                            # Compact Data Editor
+                            # Just show ID and Score + Select
+                            df_display = camp_customers[['customer_id', 'score']].copy()
+                            df_display['Select'] = False
+                            
+                            edited_df = st.data_editor(
+                                df_display,
+                                column_config={
+                                    "Select": st.column_config.CheckboxColumn("", width="small", default=False),
+                                    "customer_id": st.column_config.TextColumn("ID", width="small", disabled=True),
+                                    "score": st.column_config.NumberColumn("RFM", width="small", format="%.2f", disabled=True)
+                                },
+                                hide_index=True,
+                                key=f"grid_{camp['action_id']}_{camp['segment']}",
+                                use_container_width=True,
+                                height=200 # Scrollable fixed height
+                            )
+                            
+                            # Actions Row
+                            b_col1, b_col2 = st.columns(2)
+                            selected_rows = edited_df[edited_df['Select']]
+                            
+                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}", use_container_width=True):
+                                if not selected_rows.empty:
+                                    payload = {
+                                        "items": [
+                                            {"action_id": camp['action_id'], "segment": camp['segment'], "applied": "yes"}
+                                            for _, row in selected_rows.iterrows()
+                                        ]
+                                    }
+                                    requests.post(f"{API_URL}/feedback/batch", json=payload)
+                                    st.toast(f"Applied {len(selected_rows)} actions")
+                                    st.rerun()
+                                else:
+                                    st.warning("Select users first")
+
+                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}", use_container_width=True):
+                                if not selected_rows.empty:
+                                    payload = {
+                                        "items": [
+                                            {"action_id": camp['action_id'], "segment": camp['segment'], "applied": "no"}
+                                            for _, row in selected_rows.iterrows()
+                                        ]
+                                    }
+                                    requests.post(f"{API_URL}/feedback/batch", json=payload)
+                                    st.toast(f"Ignored {len(selected_rows)} actions")
+                                    st.rerun()
+                                else:
+                                    st.warning("Select users first")
+                                    
+                            # Quick Inspect Link (using selectbox for space efficiency)
+                            cust_list = [""] + list(camp_customers['customer_id'])
+                            inspect_id = st.selectbox(
+                                "Inspect:", 
+                                cust_list, 
+                                key=f"insp_{camp['action_id']}_{camp['segment']}",
+                                label_visibility="collapsed",
+                                placeholder="Select to Inspect..."
+                            )
+                            if inspect_id:
+                                st.session_state.selected_customer = inspect_id
+                                
     else:
-        st.warning("API Offline or No Actions Found")
+        st.error("API Offline or No Data")
 
     st.divider()
     
+    # Intelligence Section (Moved below decisions)
+    st.subheader("📊 Intelligence Overview")
     col_a, col_b = st.columns([1, 1])
     
     with col_a:
-        st.header("Segment Overview")
+        st.markdown("**Segment Distribution**")
         segments = fetch_api("segments")
         if segments and "error" not in segments:
             seg_df = pd.DataFrame(list(segments.items()), columns=['Segment', 'Count'])
             chart = alt.Chart(seg_df).mark_bar().encode(
                 x='Count',
                 y=alt.Y('Segment', sort='-x'),
-                color='Segment'
+                color='Segment',
+                tooltip=['Segment', 'Count']
             )
             st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("No segment data available")
             
     with col_b:
-        st.header("Segment Drift (Last 24h)")
+        st.markdown("**Stability Monitor (Drift)**")
         drift = fetch_api("drift")
         if drift:
             drift_df = pd.DataFrame(drift)
-            st.dataframe(drift_df.style.background_gradient(subset=['change'], cmap='RdYlGn'), use_container_width=True)
-        else:
-            st.info("No drift data available")
+            st.dataframe(
+                drift_df[['segment_name', 'change', 'current_percentage']].style.background_gradient(subset=['change'], cmap='RdYlGn'), 
+                use_container_width=True
+            )
+
 
 # =================================================================
-# TAB 2: ANALYTICS DEEP DIVE
+# TAB 2: KPI DASHBOARD
 # =================================================================
 with tab2:
-    st.header("Comprehensive Analytics Overview")
+    st.header("🔑 Key Performance Indicators")
     
-    # 1. KPI Metrics
     rfm_details = fetch_api("rfm-details")
+    revenue_data = fetch_api("revenue-trends")
+    
     if rfm_details:
         details_df = pd.DataFrame(rfm_details)
         
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Customers", len(details_df))
-        m2.metric("Active Customers (R < 30d)", len(details_df[details_df['recency'] < 30]))
-        m3.metric("Avg Monetary Value", f"${details_df['monetary'].mean():,.2f}")
-        m4.metric("Max RFM Score", f"{details_df['rfm_score'].max():.2f}")
-    
-    st.divider()
-    
-    # 2. Revenue Trends
-    st.subheader("💰 Revenue Trends")
-    revenue_data = fetch_api("revenue-trends")
-    if revenue_data:
-        rev_df = pd.DataFrame(revenue_data)
-        rev_df['date'] = pd.to_datetime(rev_df['date'])
+        # Row 1: Big Metrics
+        k1, k2, k3, k4 = st.columns(4)
         
-        line_chart = alt.Chart(rev_df).mark_line(point=True).encode(
-            x='date:T',
-            y='revenue:Q',
-            tooltip=['date:T', 'revenue:Q']
-        ).interactive()
-        st.altair_chart(line_chart, use_container_width=True)
-    else:
-        st.info("No revenue trend data available")
-
-    st.divider()
-
-    # 3. RFM Visualization & Details
-    if rfm_details:
-        col_c, col_d = st.columns([2, 1])
+        total_customers = len(details_df)
+        active_customers = len(details_df[details_df['recency'] < 30])
+        total_revenue = details_df['monetary'].sum()
+        avg_score = details_df['rfm_score'].mean()
         
-        with col_c:
-            st.subheader("🔍 RFM Distribution")
-            fig = px.scatter(
-                details_df,
-                x='recency',
-                y='frequency',
-                size='monetary',
-                color='segment',
-                hover_data=['customer_id', 'rfm_score', 'R', 'F', 'M'],
-                title="Recency vs Frequency (Size = Monetary)",
-                template="plotly_dark"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        k1.metric("Total Customers", f"{total_customers:,}")
+        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=f"{active_customers/total_customers:.1%} of base")
+        k3.metric("Total Revenue", f"{config.CURRENCY_SYMBOL} {total_revenue:,.0f}")
+        k4.metric("Avg Health Score", f"{avg_score:.2f}/5.0")
+        
+        st.divider()
+        
+        # Row 2: Charts
+        c1, c2 = st.columns([2, 1])
+        
+        with c1:
+            st.subheader("💰 Revenue Growth")
+            if revenue_data:
+                rev_df = pd.DataFrame(revenue_data)
+                rev_df['date'] = pd.to_datetime(rev_df['date'])
+                
+                chart_rev = alt.Chart(rev_df).mark_area(
+                    line={'color':'#29b5e8'},
+                    color=alt.Gradient(
+                        gradient='linear',
+                        stops=[alt.GradientStop(color='#29b5e8', offset=0),
+                               alt.GradientStop(color='rgba(41, 181, 232, 0)', offset=1)],
+                        x1=1, x2=1, y1=1, y2=0
+                    )
+                ).encode(
+                    x='date:T',
+                    y='revenue:Q',
+                    tooltip=['date:T', 'revenue:Q']
+                ).properties(height=350)
+                st.altair_chart(chart_rev, use_container_width=True)
+            else:
+                st.info("No revenue data.")
+                
+        with c2:
+            st.subheader("👥 User Segments")
+            # Donut Chart
+            seg_counts = details_df['segment'].value_counts().reset_index()
+            seg_counts.columns = ['segment', 'count']
             
-        with col_d:
-            st.subheader("📊 Segment Profiles (Avg)")
-            # Fix: Group only numeric columns to avoid future warning
-            numeric_cols = ['recency', 'frequency', 'monetary', 'R', 'F', 'M', 'rfm_score']
-            profiles = details_df.groupby('segment')[numeric_cols].mean().round(2)
-            st.table(profiles)
+            fig_donut = px.pie(
+                seg_counts, 
+                names='segment', 
+                values='count', 
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Safe, # Use more compatible palette
+                template=PLOTLY_TEMPLATE
+            )
+            fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=350)
+            st.plotly_chart(fig_donut, use_container_width=True)
+
+    else:
+        st.warning("No data available.")
+
+# =================================================================
+# TAB 3: ANALYTICS DEEP DIVE
+# =================================================================
+with tab3:
+    st.header("📈 Data Explorer")
+    
+    # Re-fetch or reuse
+    # fetch_api is cached so this is fine
+    rfm_details = fetch_api("rfm-details")
+    
+    if rfm_details:
+        details_df = pd.DataFrame(rfm_details)
+        
+        # Scatter Plot moved here
+        st.subheader("🔍 Segmentation Matrix")
+        fig = px.scatter(
+            details_df,
+            x='recency',
+            y='frequency',
+            size='monetary',
+            color='segment',
+            hover_data=['customer_id', 'rfm_score', 'R', 'F', 'M'],
+            title="Recency vs Frequency (Bubble Size = Monetary)",
+            template=PLOTLY_TEMPLATE,
+            height=600
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider()
+
+        # Profiles
+        st.subheader("📊 Segment Profiles")
+        numeric_cols = ['recency', 'frequency', 'monetary', 'R', 'F', 'M', 'rfm_score']
+        profiles = details_df.groupby('segment')[numeric_cols].mean().round(2)
+        st.dataframe(profiles, use_container_width=True)
             
         st.divider()
         
-        st.subheader("📄 Customer RFM Inventory")
-        # Filter interaction
+        # Inventory
+        st.subheader("📋 Customer Inventory")
         seg_list = ["All"] + list(details_df['segment'].unique())
-        selected_seg = st.selectbox("Filter Inventory by Segment", seg_list)
+        selected_seg = st.selectbox("Filter by Segment", seg_list, key="inv_seg_filter")
         
         if selected_seg != "All":
             filtered_df = details_df[details_df['segment'] == selected_seg]
@@ -169,22 +296,53 @@ with tab2:
             filtered_df = details_df
             
         st.dataframe(filtered_df, use_container_width=True)
-    else:
-        st.warning("No RFM details available. Generate data and check API.")
 
-# --- Sidebar: Explainability ---
+# =================================================================
+# SIDEBAR: BEAUTIFIED INSPECTOR
+# =================================================================
 with st.sidebar:
-    st.markdown("### 🔍 Customer Inspector")
-    c_id = st.text_input("Enter Customer ID")
-    if c_id:
-        if rfm_details:
-            details_df = pd.DataFrame(rfm_details)
-            cust_row = details_df[details_df['customer_id'] == c_id]
-            if not cust_row.empty:
-                st.success(f"Customer {c_id} Found")
-                st.json(cust_row.to_dict(orient='records')[0])
-            else:
-                st.error("Customer Not Found")
+    st.header("🔍 Customer Profile")
+    
+    # Manual Search
+    search_id = st.text_input("Search Customer ID")
+    if search_id:
+        st.session_state.selected_customer = search_id
+        
+    # Logic to display profile
+    if st.session_state.selected_customer:
+        c_id = st.session_state.selected_customer
+        
+        # Need RFM details to show profile
+        # Ideally this is a separate API call per customer for scale, but here we reuse the bulk fetch or cached list
+        if 'rfm_details_cache' not in st.session_state or st.session_state.rfm_details_cache is None:
+             st.session_state.rfm_details_cache = pd.DataFrame(fetch_api("rfm-details") or [])
+             
+        if not st.session_state.rfm_details_cache.empty:
+             cust_row = st.session_state.rfm_details_cache[st.session_state.rfm_details_cache['customer_id'] == c_id]
+             
+             if not cust_row.empty:
+                 data = cust_row.iloc[0]
+                 
+                 # Styled Profile Card
+                 st.markdown(f"### 👤 {data['customer_id']}")
+                 st.markdown(f"**Segment:** `{data['segment']}`")
+                 
+                 st.divider()
+                 
+                 k1, k2, k3 = st.columns(3)
+                 k1.metric("Recency", f"{data['recency']}d", help="Days since last purchase")
+                 k2.metric("Frequency", f"{data['frequency']}x", help="Total Transactions")
+                 k3.metric("Monetary", f"{config.CURRENCY_SYMBOL} {data['monetary']:,.0f}", help="Total Spend")
+                 
+                 st.progress(data['R']/5, text=f"Recency Score: {data['R']}/5")
+                 st.progress(data['F']/5, text=f"Frequency Score: {data['F']}/5")
+                 st.progress(data['M']/5, text=f"Monetary Score: {data['M']}/5")
+                 
+                 st.metric("Composite RFM Score", f"{data['rfm_score']}/5.0")
+                 
+             else:
+                 st.warning(f"Customer {c_id} not found locally.")
         else:
-            st.write(f"Analyzing {c_id}...")
-            st.caption("(To be connected to detail endpoint in V2)")
+             st.info("Loading customer data...")
+    else:
+        st.info("Select a customer from the Action Center or search above to view profile.")

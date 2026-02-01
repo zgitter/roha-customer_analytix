@@ -12,15 +12,16 @@ from features.rfm import calculate_rfm_scores
 from segmentation.rfm_segments import assign_segment
 from actions.action_engine import get_recommended_actions
 from drift.segment_drift import calculate_drift
+import config
 
-app = FastAPI(title="Behavior Intelligence API")
+app = FastAPI(title=config.app.name)
 
 # --- In-Memory Data Store (Simplification for MVP) ---
 # In real prod, this logic sits in a service or DB
 def get_data_state():
     # Load transactions
     try:
-        df = pd.read_csv('data/raw/demo_transactions.csv')
+        df = pd.read_csv(config.data.transactions_file)
     except FileNotFoundError:
         return None, None
     
@@ -61,44 +62,57 @@ def get_actions():
             m=row['M'],
             score=row['rfm_score']
         )
+        # Inject score into action objects for UI display
+        for a in acts:
+            a['score'] = row['rfm_score']
+            
         all_actions.extend(acts)
         
-    # Sort by priority (Hack: string sort works High > Medium > Low roughly, but let's be explicit)
-    # Actually 'High' < 'Medium' alphanumerically? No.
-    # Map priority to int
-    p_map = {'High': 0, 'Medium': 1, 'Low': 2}
+    # Sort by priority using config map
+    p_map = config.actions.priority_map
     all_actions.sort(key=lambda x: p_map.get(x['priority'], 99))
     
-    return all_actions[:50] # Return top 50 for UI
+    return all_actions[:200]  # Return top 200 for UI
 
 class FeedbackItem(BaseModel):
     action_id: str
     segment: str
-    applied: str # yes/no
+    applied: str  # yes/no
     outcome: str = "unknown"
+
+class BatchFeedbackItem(BaseModel):
+    items: list[FeedbackItem]
 
 @app.post("/feedback")
 def save_feedback(item: FeedbackItem):
-    file_path = 'data/feedback.csv'
+    _save_feedback_rows([item.dict()])
+    return {"status": "saved"}
+
+@app.post("/feedback/batch")
+def save_batch_feedback(batch: BatchFeedbackItem):
+    rows = [item.dict() for item in batch.items]
+    _save_feedback_rows(rows)
+    return {"status": "batch saved", "count": len(rows)}
+
+def _save_feedback_rows(rows: list):
+    file_path = config.data.feedback_file
+    clean_rows = []
     
-    # Prepare row
-    row = {
-        'action_id': item.action_id,
-        'segment': item.segment,
-        'applied': item.applied,
-        'outcome': item.outcome,
-        'timestamp': datetime.now().isoformat()
-    }
+    for r in rows:
+        clean_rows.append({
+            'action_id': r['action_id'],
+            'segment': r['segment'],
+            'applied': r['applied'],
+            'outcome': r.get('outcome', 'unknown'),
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    df = pd.DataFrame(clean_rows)
     
-    df = pd.DataFrame([row])
-    
-    # Append
     if not os.path.exists(file_path):
         df.to_csv(file_path, index=False)
     else:
         df.to_csv(file_path, mode='a', header=False, index=False)
-        
-    return {"status": "saved"}
 
 @app.get("/drift")
 def get_drift():

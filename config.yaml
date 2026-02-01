@@ -1,0 +1,70 @@
+# Customer Analytics MVP Configuration
+
+app:
+  name: "Customer Analytics MVP"
+  version: "0.1.0"
+  debug: true
+  currency:
+    symbol: "Br"
+    code: "Birr"
+
+# Data paths
+data:
+  raw_dir: "./data/raw"
+  cleaned_dir: "./data/cleaned"
+  samples_dir: "./data/samples"
+  transactions_file: "data/raw/demo_transactions.csv"
+  feedback_file: "data/feedback.csv"
+
+# Model settings
+models:
+  dir: "./models"
+  churn:
+    threshold: 0.5
+    min_samples: 100
+  segmentation:
+    n_clusters: 4
+  clv:
+    prediction_months: 12
+
+# RFM Configuration
+rfm:
+  recency_weight: 0.3
+  frequency_weight: 0.3
+  monetary_weight: 0.4
+  segments:
+    - name: "Champions"
+      r_range: [4, 5]
+      f_range: [4, 5]
+      m_range: [4, 5]
+    - name: "Loyal"
+      r_range: [3, 5]
+      f_range: [3, 5]
+      m_range: [3, 5]
+    - name: "At Risk"
+      r_range: [1, 2]
+      f_range: [3, 5]
+      m_range: [3, 5]
+    - name: "Hibernating"
+      r_range: [1, 2]
+      f_range: [1, 2]
+      m_range: [1, 2]
+
+# API settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true
+
+# Actions settings
+actions:
+  priority_map:
+    High: 0
+    Medium: 1
+    Low: 2
+
+# Dashboard settings
+dashboard:
+  port: 8501
+  theme: "light"
+  api_url: "http://localhost:8000"

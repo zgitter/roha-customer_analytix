@@ -46,9 +46,13 @@ def calculate_rfm_scores(df: pd.DataFrame,
     rfm['F'] = rfm['F'].astype(int)
     rfm['M'] = rfm['M'].astype(int)
     
-    # Composite Score
-    # score = 0.3R + 0.3F + 0.4M
-    rfm['rfm_score'] = (0.3 * rfm['R']) + (0.3 * rfm['F']) + (0.4 * rfm['M'])
+    # Composite Score from Config
+    import config
+    w_r = config.rfm.recency_weight
+    w_f = config.rfm.frequency_weight
+    w_m = config.rfm.monetary_weight
+    
+    rfm['rfm_score'] = (w_r * rfm['R']) + (w_f * rfm['F']) + (w_m * rfm['M'])
     rfm['rfm_score'] = rfm['rfm_score'].round(2)
     
     return rfm

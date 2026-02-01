@@ -2,41 +2,32 @@
 RFM Segmentation Logic
 """
 
-def assign_segment(r: int, f: int) -> str:
+def assign_segment(r: int, f: int, m: int = None) -> str:
     """
-    Assigns segment based on R and F scores using hard-coded rules.
-    
-    | Segment             | R   | F   |
-    | ------------------- | --- | --- |
-    | Champions           | 4–5 | 4–5 |
-    | Loyal               | 3–5 | 3–5 |
-    | Potential Loyalists | 4–5 | 1–3 |
-    | At Risk             | 1–2 | 3–5 |
-    | Hibernating         | 1–2 | 1–2 |
+    Assigns segment based on R and F scores using rules from config.yaml.
     """
+    import config
     
-    # Logic is hierarchical - order matters or strict ranges needed
-    
-    if r in [4, 5] and f in [4, 5]:
-        return "Champions"
-    
-    if r in [4, 5] and f in [1, 2, 3]:
-        return "Potential Loyalists"
-    
-    # Overlap handling: Champions covered above. 
-    # Use strict lower bound for Loyal to catch mid-range not caught by Champions.
-    # Actually, purely based on the table:
-    # Loyal is 3-5, 3-5. Champions is subset 4-5, 4-5.
-    # To differentiate, we check Champions first.
-    
-    if r in [3, 4, 5] and f in [3, 4, 5]:
-        return "Loyal"
+    # Iterate through segments defined in config
+    # The order in yaml determines priority if ranges overlap
+    for seg in config.rfm.segments:
+        r_range = seg.get('r_range')
+        f_range = seg.get('f_range')
+        m_range = seg.get('m_range')
         
-    if r in [1, 2] and f in [3, 4, 5]:
-        return "At Risk"
+        # Check R
+        if not (r_range[0] <= r <= r_range[1]):
+            continue
+            
+        # Check F
+        if not (f_range[0] <= f <= f_range[1]):
+            continue
+            
+        # Check M (if defined in config and provided)
+        if m_range and m is not None:
+             if not (m_range[0] <= m <= m_range[1]):
+                 continue
+                 
+        return seg['name']
         
-    if r in [1, 2] and f in [1, 2]:
-        return "Hibernating"
-        
-    # Catch-all for gaps in the simple logic (e.g. R=3, F=1 or 2)
     return "Needs Attention"
