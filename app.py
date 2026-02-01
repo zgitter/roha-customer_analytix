@@ -9,12 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 import pandas as pd
-import requests
 import altair as alt
 import plotly.express as px
 import config
+import api  # DIRECT IMPORT
 
-API_URL = config.dashboard.api_url
+# API_URL - No longer needed for logic, but maybe for reference if needed
+# API_URL = config.dashboard.api_url
 
 st.set_page_config(page_title=config.app.name, layout="wide")
 
@@ -25,13 +26,27 @@ PLOTLY_TEMPLATE = "plotly_dark" if config.dashboard.theme.lower() == "dark" else
 if "selected_customer" not in st.session_state:
     st.session_state.selected_customer = None
 
-# --- Helper to fetch data ---
+# --- Helper to fetch data (Refactored for Direct Import) ---
 @st.cache_data(ttl=60)
-def fetch_api(endpoint):
+def fetch_data(endpoint):
+    """
+    Directly calls API functions instead of HTTP requests.
+    This simulates the API layer within the Streamlit process.
+    """
     try:
-        r = requests.get(f"{API_URL}/{endpoint}")
-        return r.json()
-    except:
+        if endpoint == "actions":
+            return api.get_actions()
+        elif endpoint == "segments":
+            return api.get_segments()
+        elif endpoint == "drift":
+            return api.get_drift()
+        elif endpoint == "rfm-details":
+            return api.get_rfm_details()
+        elif endpoint == "revenue-trends":
+            return api.get_revenue_trends()
+        return None
+    except Exception as e:
+        st.error(f"Data fetch error: {e}")
         return None
 
 # --- Main Layout ---
@@ -45,7 +60,7 @@ tab1, tab2, tab3 = st.tabs(["🎯 Action Center", "📊 KPI Dashboard", "📈 An
 with tab1:
     st.subheader("🏁 Priority Activity Board")
     
-    actions_raw = fetch_api("actions")
+    actions_raw = fetch_data("actions")
     
     if actions_raw:
         actions_df = pd.DataFrame(actions_raw)
@@ -103,13 +118,19 @@ with tab1:
                             
                             if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}", use_container_width=True):
                                 if not selected_rows.empty:
-                                    payload = {
-                                        "items": [
-                                            {"action_id": camp['action_id'], "segment": camp['segment'], "applied": "yes"}
-                                            for _, row in selected_rows.iterrows()
-                                        ]
-                                    }
-                                    requests.post(f"{API_URL}/feedback/batch", json=payload)
+                                    # Construct FeedbackItem objects
+                                    items = [
+                                        api.FeedbackItem(
+                                            action_id=camp['action_id'], 
+                                            segment=camp['segment'], 
+                                            applied="yes"
+                                        )
+                                        for _, row in selected_rows.iterrows()
+                                    ]
+                                    
+                                    # Call API directly
+                                    api.save_batch_feedback(api.BatchFeedbackItem(items=items))
+                                    
                                     st.toast(f"Applied {len(selected_rows)} actions")
                                     st.rerun()
                                 else:
@@ -117,13 +138,17 @@ with tab1:
 
                             if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}", use_container_width=True):
                                 if not selected_rows.empty:
-                                    payload = {
-                                        "items": [
-                                            {"action_id": camp['action_id'], "segment": camp['segment'], "applied": "no"}
-                                            for _, row in selected_rows.iterrows()
-                                        ]
-                                    }
-                                    requests.post(f"{API_URL}/feedback/batch", json=payload)
+                                    items = [
+                                        api.FeedbackItem(
+                                            action_id=camp['action_id'], 
+                                            segment=camp['segment'], 
+                                            applied="no"
+                                        )
+                                        for _, row in selected_rows.iterrows()
+                                    ]
+                                    
+                                    api.save_batch_feedback(api.BatchFeedbackItem(items=items))
+                                    
                                     st.toast(f"Ignored {len(selected_rows)} actions")
                                     st.rerun()
                                 else:
@@ -152,7 +177,7 @@ with tab1:
     
     with col_a:
         st.markdown("**Segment Distribution**")
-        segments = fetch_api("segments")
+        segments = fetch_data("segments")
         if segments and "error" not in segments:
             seg_df = pd.DataFrame(list(segments.items()), columns=['Segment', 'Count'])
             chart = alt.Chart(seg_df).mark_bar().encode(
@@ -165,7 +190,7 @@ with tab1:
             
     with col_b:
         st.markdown("**Stability Monitor (Drift)**")
-        drift = fetch_api("drift")
+        drift = fetch_data("drift")
         if drift:
             drift_df = pd.DataFrame(drift)
             st.dataframe(
@@ -180,8 +205,8 @@ with tab1:
 with tab2:
     st.header("🔑 Key Performance Indicators")
     
-    rfm_details = fetch_api("rfm-details")
-    revenue_data = fetch_api("revenue-trends")
+    rfm_details = fetch_data("rfm-details")
+    revenue_data = fetch_data("revenue-trends")
     
     if rfm_details:
         details_df = pd.DataFrame(rfm_details)
@@ -254,8 +279,8 @@ with tab3:
     st.header("📈 Data Explorer")
     
     # Re-fetch or reuse
-    # fetch_api is cached so this is fine
-    rfm_details = fetch_api("rfm-details")
+    # fetch_data is cached so this is fine
+    rfm_details = fetch_data("rfm-details")
     
     if rfm_details:
         details_df = pd.DataFrame(rfm_details)
@@ -315,7 +340,7 @@ with st.sidebar:
         # Need RFM details to show profile
         # Ideally this is a separate API call per customer for scale, but here we reuse the bulk fetch or cached list
         if 'rfm_details_cache' not in st.session_state or st.session_state.rfm_details_cache is None:
-             st.session_state.rfm_details_cache = pd.DataFrame(fetch_api("rfm-details") or [])
+             st.session_state.rfm_details_cache = pd.DataFrame(fetch_data("rfm-details") or [])
              
         if not st.session_state.rfm_details_cache.empty:
              cust_row = st.session_state.rfm_details_cache[st.session_state.rfm_details_cache['customer_id'] == c_id]
@@ -346,3 +371,4 @@ with st.sidebar:
              st.info("Loading customer data...")
     else:
         st.info("Select a customer from the Action Center or search above to view profile.")
+
