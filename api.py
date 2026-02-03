@@ -77,6 +77,7 @@ def get_actions():
 class FeedbackItem(BaseModel):
     action_id: str
     segment: str
+    customer_id: str
     applied: str  # yes/no
     outcome: str = "unknown"
 
@@ -102,6 +103,7 @@ def _save_feedback_rows(rows: list):
         clean_rows.append({
             'action_id': r['action_id'],
             'segment': r['segment'],
+            'customer_id': r['customer_id'],
             'applied': r['applied'],
             'outcome': r.get('outcome', 'unknown'),
             'timestamp': datetime.now().isoformat()
