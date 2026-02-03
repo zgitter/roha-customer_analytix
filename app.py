@@ -21,6 +21,27 @@ st.set_page_config(page_title=config.app.name, layout="wide")
 
 # Set dynamic Plotly template
 PLOTLY_TEMPLATE = "plotly_dark" if config.dashboard.theme.lower() == "dark" else "plotly_white"
+ALTair_COLOR_PALETTE = px.colors.qualitative.Safe
+
+
+def _altair_theme():
+    is_dark = config.dashboard.theme.lower() == "dark"
+    text_color = "#FAFAFA" if is_dark else "#31333F"
+    background = "#0E1117" if is_dark else "#FFFFFF"
+    return {
+        "config": {
+            "background": background,
+            "axis": {"labelColor": text_color, "titleColor": text_color},
+            "legend": {"labelColor": text_color, "titleColor": text_color},
+            "range": {"category": ALTair_COLOR_PALETTE},
+            "title": {"color": text_color},
+            "view": {"stroke": "transparent"},
+        }
+    }
+
+
+alt.themes.register("dashboard_theme", _altair_theme)
+alt.themes.enable("dashboard_theme")
 
 # Initialize session state for inspector
 if "selected_customer" not in st.session_state:
@@ -62,7 +83,11 @@ with tab1:
     
     actions_raw = fetch_data("actions")
     
-    if actions_raw:
+    if actions_raw is None:
+        st.error("API Offline or No Data")
+    elif len(actions_raw) == 0:
+        st.info("No pending actions.")
+    else:
         actions_df = pd.DataFrame(actions_raw)
         
         # 3 Column Layout
@@ -116,7 +141,7 @@ with tab1:
                             b_col1, b_col2 = st.columns(2)
                             selected_rows = edited_df[edited_df['Select']]
                             
-                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}", use_container_width=True):
+                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}_{camp['segment']}", use_container_width=True):
                                 if not selected_rows.empty:
                                     # Construct FeedbackItem objects
                                     items = [
@@ -136,7 +161,7 @@ with tab1:
                                 else:
                                     st.warning("Select users first")
 
-                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}", use_container_width=True):
+                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}_{camp['segment']}", use_container_width=True):
                                 if not selected_rows.empty:
                                     items = [
                                         api.FeedbackItem(
@@ -166,9 +191,6 @@ with tab1:
                             if inspect_id:
                                 st.session_state.selected_customer = inspect_id
                                 
-    else:
-        st.error("API Offline or No Data")
-
     st.divider()
     
     # Intelligence Section (Moved below decisions)
@@ -219,8 +241,10 @@ with tab2:
         total_revenue = details_df['monetary'].sum()
         avg_score = details_df['rfm_score'].mean()
         
+        active_share = f"{active_customers/total_customers:.1%} of base" if total_customers else "0.0% of base"
+
         k1.metric("Total Customers", f"{total_customers:,}")
-        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=f"{active_customers/total_customers:.1%} of base")
+        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=active_share)
         k3.metric("Total Revenue", f"{config.CURRENCY_SYMBOL} {total_revenue:,.0f}")
         k4.metric("Avg Health Score", f"{avg_score:.2f}/5.0")
         
@@ -339,11 +363,11 @@ with st.sidebar:
         
         # Need RFM details to show profile
         # Ideally this is a separate API call per customer for scale, but here we reuse the bulk fetch or cached list
-        if 'rfm_details_cache' not in st.session_state or st.session_state.rfm_details_cache is None:
-             st.session_state.rfm_details_cache = pd.DataFrame(fetch_data("rfm-details") or [])
+        rfm_details = fetch_data("rfm-details")
+        rfm_details_df = pd.DataFrame(rfm_details or [])
              
-        if not st.session_state.rfm_details_cache.empty:
-             cust_row = st.session_state.rfm_details_cache[st.session_state.rfm_details_cache['customer_id'] == c_id]
+        if not rfm_details_df.empty:
+             cust_row = rfm_details_df[rfm_details_df['customer_id'] == c_id]
              
              if not cust_row.empty:
                  data = cust_row.iloc[0]
@@ -371,4 +395,3 @@ with st.sidebar:
              st.info("Loading customer data...")
     else:
         st.info("Select a customer from the Action Center or search above to view profile.")
-
