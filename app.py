@@ -21,6 +21,54 @@ st.set_page_config(page_title=config.app.name, layout="wide")
 
 # Set dynamic Plotly template
 PLOTLY_TEMPLATE = "plotly_dark" if config.dashboard.theme.lower() == "dark" else "plotly_white"
+ALTair_COLOR_PALETTE = px.colors.qualitative.Safe
+
+
+def _altair_theme():
+    is_dark = config.dashboard.theme.lower() == "dark"
+    text_color = "#FAFAFA" if is_dark else "#31333F"
+    background = "#0E1117" if is_dark else "#FFFFFF"
+    return {
+        "config": {
+            "background": background,
+            "axis": {"labelColor": text_color, "titleColor": text_color},
+            "legend": {"labelColor": text_color, "titleColor": text_color},
+            "range": {"category": ALTair_COLOR_PALETTE},
+            "title": {"color": text_color},
+            "view": {"stroke": "transparent"},
+        }
+    }
+
+
+alt.themes.register("dashboard_theme", _altair_theme)
+alt.themes.enable("dashboard_theme")
+
+
+def _filter_actions(actions_raw):
+    if not actions_raw:
+        return actions_raw
+    feedback_file = config.data.feedback_file
+    if not Path(feedback_file).exists():
+        return actions_raw
+    try:
+        feedback_df = pd.read_csv(feedback_file)
+    except Exception:
+        return actions_raw
+    required_cols = {"action_id", "segment", "customer_id"}
+    if not required_cols.issubset(set(feedback_df.columns)):
+        return actions_raw
+    applied_set = set(
+        feedback_df.loc[:, ["action_id", "segment", "customer_id"]]
+        .dropna()
+        .itertuples(index=False, name=None)
+    )
+    if not applied_set:
+        return actions_raw
+    return [
+        action
+        for action in actions_raw
+        if (action.get("action_id"), action.get("segment"), action.get("customer_id")) not in applied_set
+    ]
 
 # Initialize session state for inspector
 if "selected_customer" not in st.session_state:
@@ -61,8 +109,13 @@ with tab1:
     st.subheader("🏁 Priority Activity Board")
     
     actions_raw = fetch_data("actions")
+    actions_raw = _filter_actions(actions_raw)
     
-    if actions_raw:
+    if actions_raw is None:
+        st.error("API Offline or No Data")
+    elif len(actions_raw) == 0:
+        st.info("No pending actions.")
+    else:
         actions_df = pd.DataFrame(actions_raw)
         
         # 3 Column Layout
@@ -85,6 +138,11 @@ with tab1:
                     for _, camp in campaigns.iterrows():
                         # Create a Card-like container
                         with st.container(border=True):
+                            state_key = f"selected_ids_{camp['action_id']}_{camp['segment']}"
+                            select_key = f"select_{camp['action_id']}_{camp['segment']}"
+                            dialog_key = f"dialog_{camp['action_id']}_{camp['segment']}"
+                            selected_ids = st.session_state.get(state_key, [])
+
                             st.markdown(f"**{camp['message']}**")
                             st.caption(f"🎯 {camp['segment']} • {camp['count']} users")
                             
@@ -98,6 +156,10 @@ with tab1:
                             # Just show ID and Score + Select
                             df_display = camp_customers[['customer_id', 'score']].copy()
                             df_display['Select'] = False
+                            if selected_ids:
+                                df_display.loc[
+                                    df_display["customer_id"].isin(selected_ids), "Select"
+                                ] = True
                             
                             edited_df = st.data_editor(
                                 df_display,
@@ -112,63 +174,92 @@ with tab1:
                                 height=200 # Scrollable fixed height
                             )
                             
+                            selected_ids = edited_df.loc[edited_df["Select"], "customer_id"].tolist()
+                            if selected_ids:
+                                st.session_state[select_key] = selected_ids[0]
+                            elif select_key in st.session_state:
+                                st.session_state[select_key] = ""
+                            st.session_state[state_key] = selected_ids
+
                             # Actions Row
                             b_col1, b_col2 = st.columns(2)
-                            selected_rows = edited_df[edited_df['Select']]
                             
-                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}", use_container_width=True):
-                                if not selected_rows.empty:
-                                    # Construct FeedbackItem objects
-                                    items = [
-                                        api.FeedbackItem(
-                                            action_id=camp['action_id'], 
-                                            segment=camp['segment'], 
-                                            applied="yes"
-                                        )
-                                        for _, row in selected_rows.iterrows()
-                                    ]
-                                    
-                                    # Call API directly
-                                    api.save_batch_feedback(api.BatchFeedbackItem(items=items))
-                                    
-                                    st.toast(f"Applied {len(selected_rows)} actions")
-                                    st.rerun()
+                            if b_col1.button(
+                                "✅ Apply",
+                                key=f"btn_apply_{camp['action_id']}_{camp['segment']}",
+                                use_container_width=True,
+                            ):
+                                if selected_ids:
+                                    st.session_state[dialog_key] = {
+                                        "action": "apply",
+                                        "selected_ids": selected_ids,
+                                    }
                                 else:
                                     st.warning("Select users first")
 
-                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}", use_container_width=True):
-                                if not selected_rows.empty:
-                                    items = [
-                                        api.FeedbackItem(
-                                            action_id=camp['action_id'], 
-                                            segment=camp['segment'], 
-                                            applied="no"
-                                        )
-                                        for _, row in selected_rows.iterrows()
-                                    ]
-                                    
-                                    api.save_batch_feedback(api.BatchFeedbackItem(items=items))
-                                    
-                                    st.toast(f"Ignored {len(selected_rows)} actions")
-                                    st.rerun()
+                            if b_col2.button(
+                                "❌ Ignore",
+                                key=f"btn_ignore_{camp['action_id']}_{camp['segment']}",
+                                use_container_width=True,
+                            ):
+                                if selected_ids:
+                                    st.session_state[dialog_key] = {
+                                        "action": "ignore",
+                                        "selected_ids": selected_ids,
+                                    }
                                 else:
                                     st.warning("Select users first")
                                     
                             # Quick Inspect Link (using selectbox for space efficiency)
                             cust_list = [""] + list(camp_customers['customer_id'])
+                            if select_key not in st.session_state and selected_ids:
+                                st.session_state[select_key] = selected_ids[0]
+
                             inspect_id = st.selectbox(
                                 "Inspect:", 
                                 cust_list, 
-                                key=f"insp_{camp['action_id']}_{camp['segment']}",
+                                key=select_key,
                                 label_visibility="collapsed",
                                 placeholder="Select to Inspect..."
                             )
                             if inspect_id:
+                                if inspect_id not in selected_ids:
+                                    selected_ids = [inspect_id]
+                                    st.session_state[state_key] = selected_ids
                                 st.session_state.selected_customer = inspect_id
-                                
-    else:
-        st.error("API Offline or No Data")
 
+                            dialog_state = st.session_state.get(dialog_key)
+                            if dialog_state:
+                                action_label = "Apply" if dialog_state["action"] == "apply" else "Ignore"
+                                action_verb = "apply" if dialog_state["action"] == "apply" else "ignore"
+                                selected_ids = dialog_state["selected_ids"]
+                                with st.dialog(f"{action_label} selected actions?"):
+                                    st.write(
+                                        f"You are about to {action_verb} **{len(selected_ids)}** user(s) "
+                                        f"for **{camp['message']}**."
+                                    )
+                                    st.caption("This will clear the selection and remove these users from the list.")
+                                    d_col1, d_col2 = st.columns(2)
+                                    if d_col1.button("Proceed", use_container_width=True):
+                                        items = [
+                                            api.FeedbackItem(
+                                                action_id=camp["action_id"],
+                                                segment=camp["segment"],
+                                                customer_id=customer_id,
+                                                applied="yes" if dialog_state["action"] == "apply" else "no",
+                                            )
+                                            for customer_id in selected_ids
+                                        ]
+                                        api.save_batch_feedback(api.BatchFeedbackItem(items=items))
+                                        st.toast(f"{action_label}d {len(selected_ids)} actions")
+                                        st.session_state[state_key] = []
+                                        st.session_state[select_key] = ""
+                                        st.session_state.pop(dialog_key, None)
+                                        fetch_data.clear()
+                                        st.rerun()
+                                    if d_col2.button("Cancel", use_container_width=True):
+                                        st.session_state.pop(dialog_key, None)
+                                
     st.divider()
     
     # Intelligence Section (Moved below decisions)
@@ -219,8 +310,10 @@ with tab2:
         total_revenue = details_df['monetary'].sum()
         avg_score = details_df['rfm_score'].mean()
         
+        active_share = f"{active_customers/total_customers:.1%} of base" if total_customers else "0.0% of base"
+
         k1.metric("Total Customers", f"{total_customers:,}")
-        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=f"{active_customers/total_customers:.1%} of base")
+        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=active_share)
         k3.metric("Total Revenue", f"{config.CURRENCY_SYMBOL} {total_revenue:,.0f}")
         k4.metric("Avg Health Score", f"{avg_score:.2f}/5.0")
         
@@ -339,11 +432,11 @@ with st.sidebar:
         
         # Need RFM details to show profile
         # Ideally this is a separate API call per customer for scale, but here we reuse the bulk fetch or cached list
-        if 'rfm_details_cache' not in st.session_state or st.session_state.rfm_details_cache is None:
-             st.session_state.rfm_details_cache = pd.DataFrame(fetch_data("rfm-details") or [])
+        rfm_details = fetch_data("rfm-details")
+        rfm_details_df = pd.DataFrame(rfm_details or [])
              
-        if not st.session_state.rfm_details_cache.empty:
-             cust_row = st.session_state.rfm_details_cache[st.session_state.rfm_details_cache['customer_id'] == c_id]
+        if not rfm_details_df.empty:
+             cust_row = rfm_details_df[rfm_details_df['customer_id'] == c_id]
              
              if not cust_row.empty:
                  data = cust_row.iloc[0]
@@ -371,4 +464,3 @@ with st.sidebar:
              st.info("Loading customer data...")
     else:
         st.info("Select a customer from the Action Center or search above to view profile.")
-
