@@ -62,7 +62,11 @@ with tab1:
     
     actions_raw = fetch_data("actions")
     
-    if actions_raw:
+    if actions_raw is None:
+        st.error("API Offline or No Data")
+    elif len(actions_raw) == 0:
+        st.info("No pending actions.")
+    else:
         actions_df = pd.DataFrame(actions_raw)
         
         # 3 Column Layout
@@ -116,7 +120,7 @@ with tab1:
                             b_col1, b_col2 = st.columns(2)
                             selected_rows = edited_df[edited_df['Select']]
                             
-                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}", use_container_width=True):
+                            if b_col1.button("✅ Apply", key=f"btn_apply_{camp['action_id']}_{camp['segment']}", use_container_width=True):
                                 if not selected_rows.empty:
                                     # Construct FeedbackItem objects
                                     items = [
@@ -136,7 +140,7 @@ with tab1:
                                 else:
                                     st.warning("Select users first")
 
-                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}", use_container_width=True):
+                            if b_col2.button("❌ Ignore", key=f"btn_ignore_{camp['action_id']}_{camp['segment']}", use_container_width=True):
                                 if not selected_rows.empty:
                                     items = [
                                         api.FeedbackItem(
@@ -166,9 +170,6 @@ with tab1:
                             if inspect_id:
                                 st.session_state.selected_customer = inspect_id
                                 
-    else:
-        st.error("API Offline or No Data")
-
     st.divider()
     
     # Intelligence Section (Moved below decisions)
@@ -339,11 +340,11 @@ with st.sidebar:
         
         # Need RFM details to show profile
         # Ideally this is a separate API call per customer for scale, but here we reuse the bulk fetch or cached list
-        if 'rfm_details_cache' not in st.session_state or st.session_state.rfm_details_cache is None:
-             st.session_state.rfm_details_cache = pd.DataFrame(fetch_data("rfm-details") or [])
+        rfm_details = fetch_data("rfm-details")
+        rfm_details_df = pd.DataFrame(rfm_details or [])
              
-        if not st.session_state.rfm_details_cache.empty:
-             cust_row = st.session_state.rfm_details_cache[st.session_state.rfm_details_cache['customer_id'] == c_id]
+        if not rfm_details_df.empty:
+             cust_row = rfm_details_df[rfm_details_df['customer_id'] == c_id]
              
              if not cust_row.empty:
                  data = cust_row.iloc[0]
@@ -371,4 +372,3 @@ with st.sidebar:
              st.info("Loading customer data...")
     else:
         st.info("Select a customer from the Action Center or search above to view profile.")
-
