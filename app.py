@@ -21,6 +21,27 @@ st.set_page_config(page_title=config.app.name, layout="wide")
 
 # Set dynamic Plotly template
 PLOTLY_TEMPLATE = "plotly_dark" if config.dashboard.theme.lower() == "dark" else "plotly_white"
+ALTair_COLOR_PALETTE = px.colors.qualitative.Safe
+
+
+def _altair_theme():
+    is_dark = config.dashboard.theme.lower() == "dark"
+    text_color = "#FAFAFA" if is_dark else "#31333F"
+    background = "#0E1117" if is_dark else "#FFFFFF"
+    return {
+        "config": {
+            "background": background,
+            "axis": {"labelColor": text_color, "titleColor": text_color},
+            "legend": {"labelColor": text_color, "titleColor": text_color},
+            "range": {"category": ALTair_COLOR_PALETTE},
+            "title": {"color": text_color},
+            "view": {"stroke": "transparent"},
+        }
+    }
+
+
+alt.themes.register("dashboard_theme", _altair_theme)
+alt.themes.enable("dashboard_theme")
 
 # Initialize session state for inspector
 if "selected_customer" not in st.session_state:
@@ -220,8 +241,10 @@ with tab2:
         total_revenue = details_df['monetary'].sum()
         avg_score = details_df['rfm_score'].mean()
         
+        active_share = f"{active_customers/total_customers:.1%} of base" if total_customers else "0.0% of base"
+
         k1.metric("Total Customers", f"{total_customers:,}")
-        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=f"{active_customers/total_customers:.1%} of base")
+        k2.metric("Active Users (30d)", f"{active_customers:,}", delta=active_share)
         k3.metric("Total Revenue", f"{config.CURRENCY_SYMBOL} {total_revenue:,.0f}")
         k4.metric("Avg Health Score", f"{avg_score:.2f}/5.0")
         
